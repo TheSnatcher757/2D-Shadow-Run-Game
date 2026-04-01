@@ -1,38 +1,645 @@
-# Shadow Run
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shadow Run - 2D Platformer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a12; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'Segoe UI', sans-serif; }
+  canvas { border-radius: 4px; image-rendering: pixelated; }
+  #ui-overlay {
+    position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 24px; color: #c8d0e0; font-size: 13px; font-weight: 600;
+    text-shadow: 0 1px 4px rgba(0,0,0,0.8); pointer-events: none; z-index: 10;
+  }
+  #ui-overlay span { opacity: 0.9; }
+  #ui-overlay .label { color: #6a7590; font-weight: 400; font-size: 11px; margin-right: 4px; }
+  #mobile-controls {
+    position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+    display: none; gap: 12px; z-index: 10;
+  }
+  #mobile-controls button {
+    width: 56px; height: 56px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.08); color: white; font-size: 22px; cursor: pointer;
+    backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  }
+  @media (max-width: 768px) { #mobile-controls { display: flex; } }
+</style>
+</head>
+<body>
+<div id="ui-overlay">
+  <span><span class="label">SCORE</span> <span id="score-display">0</span></span>
+  <span><span class="label">COINS</span> <span id="coin-display">0</span></span>
+  <span><span class="label">LIVES</span> <span id="lives-display">♥♥♥</span></span>
+  <span><span class="label">LEVEL</span> <span id="level-display">1</span></span>
+</div>
+<canvas id="game"></canvas>
+<div id="mobile-controls">
+  <button id="btn-left">◀</button>
+  <button id="btn-jump">▲</button>
+  <button id="btn-right">▶</button>
+</div>
 
-A 2D platformer game built with vanilla JavaScript and HTML5 Canvas. Three levels of increasing difficulty with enemy AI, collectibles, and physics-based movement.
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
 
-## Play
+// Responsive canvas
+function resize() {
+  const s = Math.min(window.innerWidth * 0.95, window.innerHeight * 0.85, 900);
+  canvas.width = 800;
+  canvas.height = 500;
+  canvas.style.width = s + "px";
+  canvas.style.height = (s * 500 / 800) + "px";
+}
+resize();
+window.addEventListener("resize", resize);
 
-**[Play Now](https://thesnatcher757.github.io/Shadow-Run)**
+// ── Game State ───────────────────────────────────────
+const GRAVITY = 0.55;
+const FRICTION = 0.82;
+const TILE = 32;
+const COLS = 25;
+const ROWS = 16;
 
-## Features
+let gameState = "menu"; // menu, playing, dead, levelComplete, gameOver
+let score = 0;
+let coins = 0;
+let lives = 3;
+let currentLevel = 0;
+let deathTimer = 0;
+let particles = [];
+let screenShake = 0;
+let transitionAlpha = 0;
 
-- 3 handcrafted levels (Dawn Valley, Crystal Caves, Sky Fortress)
-- Physics-based movement with variable jump height
-- Enemy AI with stomp mechanics
-- Coin collecting and score tracking
-- Springs, spikes, and moving platforms
-- Particle effects and screen shake
-- Mobile touch controls
-- Lives system with invincibility frames
-- Level transitions with fade effects
+// ── Levels ───────────────────────────────────────────
+// 0=air, 1=ground, 2=platform, 3=spike, 4=coin, 5=spring, 6=moving, 7=exit, 8=enemy
+const LEVELS = [
+  { // Level 1 - Tutorial
+    name: "DAWN VALLEY",
+    bg1: "#0f1729", bg2: "#1a2440",
+    map: [
+      "0000000000000000000000000",
+      "0000000000000000000000000",
+      "0000000000000000000000000",
+      "0000000000000000000000000",
+      "0000000000000000040000000",
+      "0000000000000002222000000",
+      "0000000004000000000000000",
+      "0000000022200000000000070",
+      "0000400000000040000002221",
+      "0002220000000222000000001",
+      "0000000000000000000400001",
+      "0000000400080000002220001",
+      "0000002220011100000000001",
+      "0000000000011100300000001",
+      "1111111111111111111111111",
+      "1111111111111111111111111",
+    ],
+    spawn: { x: 1, y: 13 },
+  },
+  { // Level 2 - Caves
+    name: "CRYSTAL CAVES",
+    bg1: "#0d0d1a", bg2: "#1a1030",
+    map: [
+      "0000000000000000000000000",
+      "0000000000000000000000000",
+      "0000000000000000400000000",
+      "0000000000000002220000000",
+      "0000000040000000000000000",
+      "0000000222000000000000070",
+      "0000000000000000000022221",
+      "0000400000000000800000001",
+      "0002220003000011100400001",
+      "0000000011100000002220001",
+      "0000000000000400000000001",
+      "0004000000002220080000001",
+      "0022200300000000011100001",
+      "0000001110000000000003001",
+      "1111111111111111111111111",
+      "1111111111111111111111111",
+    ],
+    spawn: { x: 1, y: 13 },
+  },
+  { // Level 3 - Sky Fortress
+    name: "SKY FORTRESS",
+    bg1: "#0a1628", bg2: "#162040",
+    map: [
+      "0000000000000000000000000",
+      "0000000000000000000000000",
+      "0000000000000000000000070",
+      "0000000000000000000022221",
+      "0000000000000040000000001",
+      "0000000000000222080000001",
+      "0000000004000000011100001",
+      "0000000022200000000003001",
+      "0000400000000000000011101",
+      "0002220000000400000000001",
+      "0000000030002220800000001",
+      "0000000111000000011104001",
+      "0040000000000000000022201",
+      "0222003000000000000000001",
+      "1111111111111111111111111",
+      "1111111111111111111111111",
+    ],
+    spawn: { x: 1, y: 13 },
+  },
+];
 
-## Controls
+// ── Player ───────────────────────────────────────────
+let player = {
+  x: 0, y: 0, vx: 0, vy: 0,
+  w: 20, h: 28,
+  onGround: false, jumping: false,
+  facing: 1, animFrame: 0, animTimer: 0,
+  invincible: 0,
+};
 
-- Arrow Keys or WASD to move
-- Space or Up Arrow to jump
-- Stomp enemies from above
-- Collect coins and reach the exit
+// ── Entities ─────────────────────────────────────────
+let coinEntities = [];
+let enemyEntities = [];
+let springEntities = [];
+let exitEntity = null;
+let tileMap = [];
 
-## Tech
+function loadLevel(idx) {
+  if (idx >= LEVELS.length) { gameState = "win"; return; }
+  currentLevel = idx;
+  const level = LEVELS[idx];
+  tileMap = [];
+  coinEntities = [];
+  enemyEntities = [];
+  springEntities = [];
+  exitEntity = null;
 
-- Zero dependencies
-- Pure JavaScript and HTML5 Canvas
-- Single file, no build step
-- Responsive with mobile support
+  for (let r = 0; r < ROWS; r++) {
+    tileMap[r] = [];
+    for (let c = 0; c < COLS; c++) {
+      const ch = level.map[r]?.[c] || "0";
+      const val = parseInt(ch);
+      if (val === 4) { coinEntities.push({ x: c * TILE + 8, y: r * TILE + 8, w: 16, h: 16, collected: false, bobOffset: Math.random() * Math.PI * 2 }); tileMap[r][c] = 0; }
+      else if (val === 7) { exitEntity = { x: c * TILE, y: r * TILE, w: TILE, h: TILE }; tileMap[r][c] = 0; }
+      else if (val === 8) { enemyEntities.push({ x: c * TILE, y: r * TILE + 4, w: 24, h: 24, vx: 0.8, startX: c * TILE - 40, endX: c * TILE + 60, alive: true }); tileMap[r][c] = 0; }
+      else if (val === 5) { springEntities.push({ x: c * TILE, y: r * TILE, compressed: 0 }); tileMap[r][c] = 0; }
+      else { tileMap[r][c] = val; }
+    }
+  }
 
-## Author
+  player.x = level.spawn.x * TILE;
+  player.y = level.spawn.y * TILE;
+  player.vx = 0; player.vy = 0;
+  player.invincible = 0;
+  transitionAlpha = 1;
+}
 
-**Angel Nunez**
-B.S. Computer Science, San Diego State University
+// ── Input ────────────────────────────────────────────
+const keys = {};
+window.addEventListener("keydown", e => { keys[e.key] = true; if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"," "].includes(e.key)) e.preventDefault(); });
+window.addEventListener("keyup", e => { keys[e.key] = false; });
+
+// Mobile
+const mKeys = { left: false, right: false, jump: false };
+function setupMobile(id, key) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.addEventListener("touchstart", e => { e.preventDefault(); mKeys[key] = true; });
+  btn.addEventListener("touchend", e => { e.preventDefault(); mKeys[key] = false; });
+}
+setupMobile("btn-left", "left");
+setupMobile("btn-right", "right");
+setupMobile("btn-jump", "jump");
+
+function isLeft() { return keys["ArrowLeft"] || keys["a"] || mKeys.left; }
+function isRight() { return keys["ArrowRight"] || keys["d"] || mKeys.right; }
+function isJump() { return keys["ArrowUp"] || keys["w"] || keys[" "] || mKeys.jump; }
+
+// ── Collision ────────────────────────────────────────
+function getTile(x, y) {
+  const c = Math.floor(x / TILE);
+  const r = Math.floor(y / TILE);
+  if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return 1;
+  return tileMap[r]?.[c] || 0;
+}
+
+function isSolid(val) { return val === 1 || val === 2; }
+
+function rectOverlap(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+// ── Particles ────────────────────────────────────────
+function spawnParticles(x, y, color, count, speed) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const spd = Math.random() * speed;
+    particles.push({
+      x, y, vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd - 1,
+      life: 1, decay: 0.015 + Math.random() * 0.02,
+      size: 2 + Math.random() * 3, color,
+    });
+  }
+}
+
+// ── Update ───────────────────────────────────────────
+function update() {
+  if (gameState === "menu") {
+    if (isJump() || keys["Enter"]) { gameState = "playing"; loadLevel(0); }
+    return;
+  }
+  if (gameState === "dead") {
+    deathTimer--;
+    if (deathTimer <= 0) {
+      if (lives <= 0) { gameState = "gameOver"; }
+      else { gameState = "playing"; loadLevel(currentLevel); }
+    }
+    return;
+  }
+  if (gameState === "levelComplete") {
+    transitionAlpha += 0.02;
+    if (transitionAlpha >= 1) { loadLevel(currentLevel + 1); gameState = "playing"; }
+    return;
+  }
+  if (gameState === "gameOver" || gameState === "win") {
+    if (isJump() || keys["Enter"]) {
+      gameState = "playing"; score = 0; coins = 0; lives = 3; loadLevel(0);
+    }
+    return;
+  }
+
+  // Transition fade in
+  if (transitionAlpha > 0) transitionAlpha = Math.max(0, transitionAlpha - 0.03);
+  if (screenShake > 0) screenShake *= 0.85;
+  if (player.invincible > 0) player.invincible--;
+
+  // Movement
+  if (isLeft()) { player.vx -= 0.6; player.facing = -1; }
+  if (isRight()) { player.vx += 0.6; player.facing = 1; }
+  if (isJump() && player.onGround && !player.jumping) {
+    player.vy = -10.5;
+    player.onGround = false;
+    player.jumping = true;
+    spawnParticles(player.x + player.w/2, player.y + player.h, "#ffffff44", 5, 2);
+  }
+  if (!isJump()) player.jumping = false;
+
+  // Variable jump height
+  if (player.vy < -3 && !isJump()) player.vy *= 0.7;
+
+  player.vx *= FRICTION;
+  player.vy += GRAVITY;
+  if (player.vy > 12) player.vy = 12;
+
+  // Horizontal collision
+  player.x += player.vx;
+  const margin = 2;
+  // Left/right walls
+  for (let testY of [player.y + margin, player.y + player.h - margin, player.y + player.h / 2]) {
+    if (player.vx < 0 && isSolid(getTile(player.x, testY))) {
+      player.x = Math.ceil(player.x / TILE) * TILE;
+      player.vx = 0;
+    }
+    if (player.vx > 0 && isSolid(getTile(player.x + player.w, testY))) {
+      player.x = Math.floor((player.x + player.w) / TILE) * TILE - player.w;
+      player.vx = 0;
+    }
+  }
+
+  // Vertical collision
+  player.y += player.vy;
+  player.onGround = false;
+  for (let testX of [player.x + margin, player.x + player.w - margin]) {
+    // Floor
+    if (player.vy > 0 && isSolid(getTile(testX, player.y + player.h))) {
+      player.y = Math.floor((player.y + player.h) / TILE) * TILE - player.h;
+      player.vy = 0;
+      player.onGround = true;
+    }
+    // Ceiling
+    if (player.vy < 0 && isSolid(getTile(testX, player.y))) {
+      player.y = Math.ceil(player.y / TILE) * TILE;
+      player.vy = 0;
+    }
+  }
+
+  // Spikes
+  const playerTile = getTile(player.x + player.w/2, player.y + player.h - 2);
+  if (playerTile === 3 && player.invincible <= 0) { hurtPlayer(); }
+
+  // Fall off screen
+  if (player.y > canvas.height + 50) hurtPlayer();
+
+  // Coins
+  const pRect = { x: player.x, y: player.y, w: player.w, h: player.h };
+  coinEntities.forEach(c => {
+    if (!c.collected && rectOverlap(pRect, c)) {
+      c.collected = true; coins++; score += 100;
+      spawnParticles(c.x + 8, c.y + 8, "#ffd700", 8, 3);
+    }
+  });
+
+  // Enemies
+  enemyEntities.forEach(e => {
+    if (!e.alive) return;
+    e.x += e.vx;
+    if (e.x <= e.startX || e.x >= e.endX) e.vx *= -1;
+
+    const eRect = { x: e.x, y: e.y, w: e.w, h: e.h };
+    if (rectOverlap(pRect, eRect)) {
+      if (player.vy > 0 && player.y + player.h < e.y + e.h / 2) {
+        // Stomp
+        e.alive = false; player.vy = -8; score += 200;
+        spawnParticles(e.x + e.w/2, e.y + e.h/2, "#ef4444", 12, 4);
+        screenShake = 4;
+      } else if (player.invincible <= 0) {
+        hurtPlayer();
+      }
+    }
+  });
+
+  // Springs
+  springEntities.forEach(s => {
+    const sRect = { x: s.x, y: s.y, w: TILE, h: TILE };
+    if (rectOverlap(pRect, sRect) && player.vy > 0) {
+      player.vy = -14; s.compressed = 8;
+      spawnParticles(s.x + TILE/2, s.y, "#10b981", 6, 3);
+    }
+    if (s.compressed > 0) s.compressed--;
+  });
+
+  // Exit
+  if (exitEntity && rectOverlap(pRect, exitEntity)) {
+    gameState = "levelComplete";
+    score += 500;
+    spawnParticles(exitEntity.x + TILE/2, exitEntity.y + TILE/2, "#3b82f6", 20, 5);
+  }
+
+  // Animation
+  if (Math.abs(player.vx) > 0.5 && player.onGround) {
+    player.animTimer++;
+    if (player.animTimer > 6) { player.animTimer = 0; player.animFrame = (player.animFrame + 1) % 4; }
+  } else { player.animFrame = 0; }
+
+  // Update particles
+  particles.forEach(p => { p.x += p.vx; p.y += p.vy; p.vy += 0.05; p.life -= p.decay; });
+  particles = particles.filter(p => p.life > 0);
+}
+
+function hurtPlayer() {
+  lives--;
+  screenShake = 8;
+  spawnParticles(player.x + player.w/2, player.y + player.h/2, "#ef4444", 15, 5);
+  if (lives <= 0) { gameState = "dead"; deathTimer = 90; }
+  else { player.invincible = 90; player.vy = -8; player.vx = -player.facing * 4; }
+}
+
+// ── Draw ─────────────────────────────────────────────
+function draw() {
+  const level = LEVELS[currentLevel] || LEVELS[0];
+  const shakeX = screenShake > 0.5 ? (Math.random() - 0.5) * screenShake : 0;
+  const shakeY = screenShake > 0.5 ? (Math.random() - 0.5) * screenShake : 0;
+
+  ctx.save();
+  ctx.translate(shakeX, shakeY);
+
+  // Background gradient
+  const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  grad.addColorStop(0, level.bg1);
+  grad.addColorStop(1, level.bg2);
+  ctx.fillStyle = grad;
+  ctx.fillRect(-10, -10, canvas.width + 20, canvas.height + 20);
+
+  // Background stars
+  ctx.fillStyle = "rgba(255,255,255,0.15)";
+  for (let i = 0; i < 40; i++) {
+    const sx = (i * 137.5 + Date.now() * 0.002) % canvas.width;
+    const sy = (i * 97.3) % (canvas.height * 0.6);
+    ctx.fillRect(sx, sy, 1.5, 1.5);
+  }
+
+  if (gameState === "menu") { drawMenu(); ctx.restore(); return; }
+  if (gameState === "gameOver") { drawGameOver(); ctx.restore(); return; }
+  if (gameState === "win") { drawWin(); ctx.restore(); return; }
+
+  // Draw tiles
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const val = tileMap[r]?.[c];
+      const tx = c * TILE, ty = r * TILE;
+      if (val === 1) {
+        ctx.fillStyle = "#2a3550";
+        ctx.fillRect(tx, ty, TILE, TILE);
+        ctx.fillStyle = "#344060";
+        ctx.fillRect(tx, ty, TILE, 3);
+        // Subtle grid lines
+        ctx.strokeStyle = "rgba(255,255,255,0.03)";
+        ctx.strokeRect(tx, ty, TILE, TILE);
+      } else if (val === 2) {
+        ctx.fillStyle = "#3a4a6a";
+        ctx.fillRect(tx, ty + 4, TILE, TILE - 4);
+        ctx.fillStyle = "#5a7aaa";
+        ctx.fillRect(tx, ty, TILE, 4);
+      } else if (val === 3) {
+        // Spikes
+        ctx.fillStyle = "#ef4444";
+        for (let s = 0; s < 4; s++) {
+          ctx.beginPath();
+          ctx.moveTo(tx + s * 8, ty + TILE);
+          ctx.lineTo(tx + s * 8 + 4, ty + 10);
+          ctx.lineTo(tx + s * 8 + 8, ty + TILE);
+          ctx.fill();
+        }
+      }
+    }
+  }
+
+  // Springs
+  springEntities.forEach(s => {
+    const comp = s.compressed > 0 ? 6 : 0;
+    ctx.fillStyle = "#10b981";
+    ctx.fillRect(s.x + 4, s.y + TILE - 10 + comp, TILE - 8, 10 - comp);
+    ctx.fillStyle = "#059669";
+    ctx.fillRect(s.x + 2, s.y + TILE - 4, TILE - 4, 4);
+  });
+
+  // Exit
+  if (exitEntity) {
+    const pulse = Math.sin(Date.now() * 0.005) * 0.3 + 0.7;
+    ctx.fillStyle = `rgba(59, 130, 246, ${pulse * 0.3})`;
+    ctx.fillRect(exitEntity.x - 4, exitEntity.y - 4, TILE + 8, TILE + 8);
+    ctx.fillStyle = `rgba(59, 130, 246, ${pulse})`;
+    ctx.fillRect(exitEntity.x, exitEntity.y, TILE, TILE);
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 18px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("→", exitEntity.x + TILE/2, exitEntity.y + TILE/2 + 6);
+    ctx.textAlign = "left";
+  }
+
+  // Coins
+  const t = Date.now() * 0.003;
+  coinEntities.forEach(c => {
+    if (c.collected) return;
+    const bob = Math.sin(t + c.bobOffset) * 3;
+    ctx.fillStyle = "#ffd700";
+    ctx.beginPath();
+    ctx.arc(c.x + 8, c.y + 8 + bob, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#ffec80";
+    ctx.beginPath();
+    ctx.arc(c.x + 6, c.y + 6 + bob, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // Enemies
+  enemyEntities.forEach(e => {
+    if (!e.alive) return;
+    const wobble = Math.sin(Date.now() * 0.008) * 2;
+    ctx.fillStyle = "#ef4444";
+    ctx.fillRect(e.x + 2, e.y + wobble, e.w - 4, e.h - 2);
+    ctx.fillStyle = "#fff";
+    const eyeDir = e.vx > 0 ? 3 : -1;
+    ctx.fillRect(e.x + 6 + eyeDir, e.y + 6 + wobble, 4, 5);
+    ctx.fillRect(e.x + 14 + eyeDir, e.y + 6 + wobble, 4, 5);
+    ctx.fillStyle = "#1a1a2e";
+    ctx.fillRect(e.x + 7 + eyeDir, e.y + 8 + wobble, 2, 3);
+    ctx.fillRect(e.x + 15 + eyeDir, e.y + 8 + wobble, 2, 3);
+  });
+
+  // Player
+  if (player.invincible <= 0 || Math.floor(player.invincible / 4) % 2 === 0) {
+    const px = player.x, py = player.y;
+    // Shadow
+    ctx.fillStyle = "rgba(0,0,0,0.2)";
+    ctx.fillRect(px + 2, py + player.h - 2, player.w - 4, 4);
+    // Body
+    ctx.fillStyle = "#e2e8f0";
+    ctx.fillRect(px + 3, py + 8, 14, 18);
+    // Head
+    ctx.fillStyle = "#c8d0e0";
+    ctx.fillRect(px + 4, py, 12, 10);
+    // Eyes
+    ctx.fillStyle = "#3b82f6";
+    if (player.facing > 0) {
+      ctx.fillRect(px + 10, py + 3, 3, 3);
+    } else {
+      ctx.fillRect(px + 7, py + 3, 3, 3);
+    }
+    // Legs animation
+    const legOffset = player.onGround ? Math.sin(player.animFrame * Math.PI / 2) * 3 : 2;
+    ctx.fillStyle = "#64748b";
+    ctx.fillRect(px + 4, py + 24, 5, 6 + legOffset);
+    ctx.fillRect(px + 11, py + 24, 5, 6 - legOffset);
+  }
+
+  // Particles
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+  });
+  ctx.globalAlpha = 1;
+
+  // Level name on transition
+  if (transitionAlpha > 0) {
+    ctx.fillStyle = `rgba(10, 10, 18, ${transitionAlpha})`;
+    ctx.fillRect(-10, -10, canvas.width + 20, canvas.height + 20);
+    if (transitionAlpha > 0.3) {
+      ctx.fillStyle = `rgba(255,255,255,${transitionAlpha})`;
+      ctx.font = "bold 28px 'Segoe UI', sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(level.name, canvas.width/2, canvas.height/2 - 10);
+      ctx.font = "14px 'Segoe UI', sans-serif";
+      ctx.fillStyle = `rgba(100,116,139,${transitionAlpha})`;
+      ctx.fillText(`Level ${currentLevel + 1}`, canvas.width/2, canvas.height/2 + 20);
+      ctx.textAlign = "left";
+    }
+  }
+
+  // Death overlay
+  if (gameState === "dead") {
+    ctx.fillStyle = `rgba(239, 68, 68, ${0.3 * (1 - deathTimer/90)})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  ctx.restore();
+
+  // Update HUD
+  document.getElementById("score-display").textContent = score;
+  document.getElementById("coin-display").textContent = coins;
+  document.getElementById("lives-display").textContent = "♥".repeat(Math.max(0, lives)) + "♡".repeat(Math.max(0, 3 - lives));
+  document.getElementById("level-display").textContent = currentLevel + 1;
+}
+
+function drawMenu() {
+  ctx.fillStyle = "#e2e8f0";
+  ctx.font = "bold 42px 'Segoe UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("SHADOW RUN", canvas.width/2, 180);
+
+  ctx.fillStyle = "#64748b";
+  ctx.font = "16px 'Segoe UI', sans-serif";
+  ctx.fillText("A 2D Platformer", canvas.width/2, 215);
+
+  ctx.fillStyle = "#3b82f6";
+  ctx.font = "15px 'Segoe UI', sans-serif";
+  const blink = Math.sin(Date.now() * 0.004) > 0;
+  if (blink) ctx.fillText("Press SPACE or ENTER to start", canvas.width/2, 300);
+
+  ctx.fillStyle = "#4a5568";
+  ctx.font = "12px 'Segoe UI', sans-serif";
+  ctx.fillText("Arrow Keys / WASD to move  |  Space / Up to jump", canvas.width/2, 360);
+  ctx.fillText("Stomp enemies from above  |  Collect coins  |  Reach the exit", canvas.width/2, 382);
+
+  ctx.fillStyle = "#334155";
+  ctx.font = "11px 'Segoe UI', sans-serif";
+  ctx.fillText("Julio Nunez Garcia | Shadow Run v1.0", canvas.width/2, 450);
+  ctx.textAlign = "left";
+}
+
+function drawGameOver() {
+  ctx.fillStyle = "rgba(10,10,18,0.85)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#ef4444";
+  ctx.font = "bold 36px 'Segoe UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("GAME OVER", canvas.width/2, 200);
+  ctx.fillStyle = "#94a3b8";
+  ctx.font = "16px 'Segoe UI', sans-serif";
+  ctx.fillText(`Final Score: ${score}  |  Coins: ${coins}`, canvas.width/2, 250);
+  ctx.fillStyle = "#3b82f6";
+  ctx.font = "14px 'Segoe UI', sans-serif";
+  const blink = Math.sin(Date.now() * 0.004) > 0;
+  if (blink) ctx.fillText("Press SPACE to retry", canvas.width/2, 320);
+  ctx.textAlign = "left";
+}
+
+function drawWin() {
+  ctx.fillStyle = "rgba(10,10,18,0.85)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#10b981";
+  ctx.font = "bold 36px 'Segoe UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("YOU WIN!", canvas.width/2, 190);
+  ctx.fillStyle = "#e2e8f0";
+  ctx.font = "18px 'Segoe UI', sans-serif";
+  ctx.fillText(`Score: ${score}  |  Coins: ${coins}`, canvas.width/2, 240);
+  ctx.fillStyle = "#64748b";
+  ctx.font = "14px 'Segoe UI', sans-serif";
+  ctx.fillText("All 3 levels complete!", canvas.width/2, 275);
+  ctx.fillStyle = "#3b82f6";
+  const blink = Math.sin(Date.now() * 0.004) > 0;
+  if (blink) ctx.fillText("Press SPACE to play again", canvas.width/2, 340);
+  ctx.textAlign = "left";
+}
+
+// ── Game Loop ────────────────────────────────────────
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
