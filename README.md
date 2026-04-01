@@ -4,7 +4,7 @@ A 2D platformer game built with vanilla JavaScript and HTML5 Canvas. Three level
 
 ## Play
 
-**[Play Now] https://thesnatcher757.github.io/2D-Shadow-Run-Game/**
+**[Play Now](https://thesnatcher757.github.io/2D-Shadow-Run-Game/)**
 
 ## Features
 
